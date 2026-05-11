@@ -24,7 +24,7 @@ export const useChatStore = create<ChatState>()(
   persist(
     (set) => ({
       messages: [],
-      selectedModel: 'gemini-2.0-flash',
+      selectedModel: 'gemini-2.5-flash-lite',
       isStreaming: false,
       pendingIntent: null,
 
@@ -51,7 +51,6 @@ export const useChatStore = create<ChatState>()(
     {
       name: 'fd_chat_v1',
       storage: createJSONStorage(() => AsyncStorage),
-      // Do not persist isStreaming — always reset to false on hydration
       partialize: (state) => ({
         messages: state.messages,
         selectedModel: state.selectedModel,

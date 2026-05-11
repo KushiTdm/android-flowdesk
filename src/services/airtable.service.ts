@@ -5,11 +5,18 @@
 import { AirtableError } from '../utils/error.utils';
 
 const BASE_URL = 'https://api.airtable.com/v0';
+const META_URL = 'https://api.airtable.com/v0/meta';
 
 export interface AirtableRecord {
   id: string;
   fields: Record<string, unknown>;
   createdTime: string;
+}
+
+export interface AirtableTable {
+  id: string;
+  name: string;
+  primaryFieldId: string;
 }
 
 interface AirtableListResponse {
@@ -21,6 +28,10 @@ interface AirtableCreateResponse {
   id: string;
   fields: Record<string, unknown>;
   createdTime: string;
+}
+
+interface AirtableMetaTablesResponse {
+  tables: AirtableTable[];
 }
 
 // ---------------------------------------------------------------------------
@@ -54,6 +65,25 @@ async function throwOnAirtableError(response: Response): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export const AirtableService = {
+  /**
+   * Fetches available tables from a base using the Airtable Metadata API.
+   * Lets the user pick which table to use instead of typing the ID.
+   */
+  async listTables(
+    apiKey: string,
+    baseId: string,
+  ): Promise<AirtableTable[]> {
+    const response = await fetch(`${META_URL}/bases/${baseId}/tables`, {
+      headers: authHeaders(apiKey),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    await throwOnAirtableError(response);
+
+    const data = (await response.json()) as AirtableMetaTablesResponse;
+    return data.tables ?? [];
+  },
+
   /** Fetches all records from a table (handles pagination) */
   async listRecords(
     apiKey: string,
@@ -140,7 +170,7 @@ export const AirtableService = {
   async validateCredentials(apiKey: string, baseId: string): Promise<boolean> {
     try {
       const response = await fetch(
-        `https://api.airtable.com/v0/meta/bases/${baseId}/tables`,
+        `${META_URL}/bases/${baseId}/tables`,
         {
           headers: authHeaders(apiKey),
           signal: AbortSignal.timeout(5_000),

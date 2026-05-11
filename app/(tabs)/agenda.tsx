@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Agenda — Vue du jour avec timeline
+// Agenda — Vue du jour avec timeline (données Google Calendar réelles)
 // ---------------------------------------------------------------------------
 
 import React from 'react';
@@ -26,7 +26,7 @@ import { useAgenda } from '@/src/hooks/use-agenda';
 import type { CalendarEvent } from '@/src/types/event.types';
 
 // ---------------------------------------------------------------------------
-// Helpers inline (date formatting sans dépendance externe)
+// Helpers
 // ---------------------------------------------------------------------------
 
 function formatHHMM(iso: string): string {
@@ -43,59 +43,12 @@ function formatTodayEyebrow(): string {
 }
 
 // ---------------------------------------------------------------------------
-// Demo events (affichés si non connecté ou liste vide)
-// ---------------------------------------------------------------------------
-
-function buildDemoEvents(): CalendarEvent[] {
-  const today = new Date();
-  const d = (h: number, min: number): string => {
-    const dt = new Date(today);
-    dt.setHours(h, min, 0, 0);
-    return dt.toISOString();
-  };
-
-  return [
-    {
-      id: 'e1',
-      title: 'Sprint planning',
-      start: d(9, 0),
-      end: d(10, 30),
-      calendar: 'travail',
-    },
-    {
-      id: 'e2',
-      title: 'Déjeuner avec Rémi',
-      start: d(12, 0),
-      end: d(13, 0),
-      calendar: 'perso',
-    },
-    {
-      id: 'e3',
-      title: 'Interview Lead Designer',
-      start: d(14, 30),
-      end: d(15, 30),
-      calendar: 'recrut',
-      isCurrent: true,
-    },
-    {
-      id: 'e4',
-      title: 'Review produit',
-      start: d(17, 0),
-      end: d(17, 45),
-      calendar: 'travail',
-    },
-  ];
-}
-
-// ---------------------------------------------------------------------------
 // NotConnectedState
 // ---------------------------------------------------------------------------
 
 function NotConnectedState({
-  message,
   onPress,
 }: {
-  message: string;
   onPress: () => void;
 }): React.ReactElement {
   return (
@@ -107,10 +60,33 @@ function NotConnectedState({
         align="center"
         style={styles.notConnectedText}
       >
-        {message}
+        Connectez Google Agenda pour voir vos événements
       </FDText>
       <Button variant="secondary" onPress={onPress}>
-        Configurer
+        Configurer dans le profil
+      </Button>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// EmptyDayState — connected but no events
+// ---------------------------------------------------------------------------
+
+function EmptyDayState({ onAddEvent }: { onAddEvent: () => void }): React.ReactElement {
+  return (
+    <View style={styles.notConnected}>
+      <Icon name="Calendar" size={48} color={COLORS.textFaint} />
+      <FDText
+        variant="bodyMedium"
+        color={COLORS.textMuted}
+        align="center"
+        style={styles.notConnectedText}
+      >
+        Aucun événement aujourd'hui
+      </FDText>
+      <Button variant="secondary" onPress={onAddEvent}>
+        Ajouter un événement
       </Button>
     </View>
   );
@@ -130,7 +106,7 @@ function FreeSlotCard({
   return (
     <View style={styles.freeSlot}>
       <FDText variant="caption" color={COLORS.textFaint}>
-        Disponible · {endTime}
+        Créneau libre · jusqu'à {endTime}
       </FDText>
       <FDText variant="caption" color={COLORS.accent}>
         Planifier +
@@ -194,7 +170,7 @@ function DayStrip({
 }
 
 // ---------------------------------------------------------------------------
-// Timeline item types
+// Timeline builder
 // ---------------------------------------------------------------------------
 
 type TimelineItem =
@@ -212,7 +188,6 @@ function buildTimeline(events: CalendarEvent[]): TimelineItem[] {
     const ev = sorted[i];
     items.push({ kind: 'event', event: ev });
 
-    // Insert free slot between consecutive events
     const next = sorted[i + 1];
     if (next !== undefined) {
       const endMs = new Date(ev.end).getTime();
@@ -238,10 +213,16 @@ function buildTimeline(events: CalendarEvent[]): TimelineItem[] {
 
 export default function AgendaScreen(): React.ReactElement {
   const router = useRouter();
-  const { events, isNotConnected, fetchTodayEvents } = useAgenda();
+  const { events, isNotConnected, fetchTodayEvents, syncStatus } = useAgenda();
 
   const [refreshing, setRefreshing] = React.useState(false);
   const [activeDay, setActiveDay] = React.useState(3); // centre = aujourd'hui
+
+  // Fetch on mount
+  React.useEffect(() => {
+    void fetchTodayEvents();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const onRefresh = React.useCallback(async () => {
     setRefreshing(true);
@@ -249,10 +230,8 @@ export default function AgendaScreen(): React.ReactElement {
     setRefreshing(false);
   }, [fetchTodayEvents]);
 
-  const displayEvents: CalendarEvent[] =
-    isNotConnected || events.length === 0 ? buildDemoEvents() : events;
-
-  const timeline = buildTimeline(displayEvents);
+  const isLoading = syncStatus === 'syncing';
+  const timeline = buildTimeline(events);
 
   return (
     <GradientBackground style={styles.flex}>
@@ -261,82 +240,80 @@ export default function AgendaScreen(): React.ReactElement {
           {/* Header */}
           <Header
             eyebrow={formatTodayEyebrow()}
-            title="Aujourd'hui"
+            title={isLoading ? 'Chargement…' : 'Aujourd\'hui'}
             titleVariant="displayIt"
             rightAction={
-              <Pressable onPress={() => {}}>
-                <Icon name="Search" size={22} color={COLORS.textMuted} />
+              <Pressable onPress={() => void fetchTodayEvents()}>
+                <Icon name="Refresh" size={20} color={COLORS.textMuted} />
               </Pressable>
             }
           />
 
           {/* DayStrip */}
-          <DayStrip selectedIndex={activeDay} onSelect={setActiveDay} />
+          <DayStrip selectedIndex={activeDay} onSelect={(idx) => {
+            setActiveDay(idx);
+            // Only fetch for today (index 3); other days need separate date param
+            if (idx === 3) void fetchTodayEvents();
+          }} />
 
-          {/* Bandeau "démo" si non connecté */}
-          {isNotConnected && (
-            <View style={styles.demoBanner}>
-              <FDText variant="caption" color={COLORS.textFaint} align="center">
-                Données de démonstration · Connectez Google Calendar dans le profil
-              </FDText>
-            </View>
-          )}
-
-          {/* Timeline */}
-          <ScrollView
-            style={styles.flex}
-            contentContainerStyle={styles.timelineContent}
-            showsVerticalScrollIndicator={false}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                tintColor={COLORS.accent}
-              />
-            }
-          >
-            {displayEvents.length === 0 ? (
-              <NotConnectedState
-                message="Aucun événement trouvé. Connectez Google Calendar pour voir votre agenda."
-                onPress={() => { router.push('/profile' as never); }}
-              />
-            ) : (
-              timeline.map((item) => {
-                if (item.kind === 'event') {
-                  return (
-                    <View key={item.event.id} style={styles.timelineRow}>
-                      {/* Time gutter */}
-                      <View style={styles.timeGutter}>
-                        <FDText variant="mono">{formatHHMM(item.event.start)}</FDText>
+          {/* Timeline / States */}
+          {isNotConnected ? (
+            <NotConnectedState
+              onPress={() => router.push('/(tabs)/profile' as never)}
+            />
+          ) : (
+            <ScrollView
+              style={styles.flex}
+              contentContainerStyle={styles.timelineContent}
+              showsVerticalScrollIndicator={false}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={onRefresh}
+                  tintColor={COLORS.accent}
+                />
+              }
+            >
+              {events.length === 0 && !isLoading ? (
+                <EmptyDayState
+                  onAddEvent={() => router.push('/modals/add-event' as never)}
+                />
+              ) : (
+                timeline.map((item) => {
+                  if (item.kind === 'event') {
+                    return (
+                      <View key={item.event.id} style={styles.timelineRow}>
+                        <View style={styles.timeGutter}>
+                          <FDText variant="mono">{formatHHMM(item.event.start)}</FDText>
+                        </View>
+                        <EventCard
+                          event={item.event}
+                          style={styles.timelineCard}
+                          onPress={() => {}}
+                        />
                       </View>
-                      {/* Event card */}
-                      <EventCard
-                        event={item.event}
-                        style={styles.timelineCard}
-                        onPress={() => {}}
-                      />
+                    );
+                  }
+
+                  return (
+                    <View key={item.id} style={styles.timelineRow}>
+                      <View style={styles.timeGutter}>
+                        <FDText variant="mono" color={COLORS.textFaint}>
+                          {item.startTime}
+                        </FDText>
+                      </View>
+                      <View style={styles.timelineCard}>
+                        <FreeSlotCard
+                          startTime={item.startTime}
+                          endTime={item.endTime}
+                        />
+                      </View>
                     </View>
                   );
-                }
-
-                return (
-                  <View key={item.id} style={styles.timelineRow}>
-                    <View style={styles.timeGutter}>
-                      <FDText variant="mono" color={COLORS.textFaint}>
-                        {item.startTime}
-                      </FDText>
-                    </View>
-                    <View style={styles.timelineCard}>
-                      <FreeSlotCard
-                        startTime={item.startTime}
-                        endTime={item.endTime}
-                      />
-                    </View>
-                  </View>
-                );
-              })
-            )}
-          </ScrollView>
+                })
+              )}
+            </ScrollView>
+          )}
         </View>
 
         {/* FAB */}
@@ -376,16 +353,6 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.accent,
   } as ViewStyle,
 
-  // Demo banner
-  demoBanner: {
-    marginHorizontal: SPACING.lg,
-    marginBottom: SPACING.sm,
-    paddingVertical: SPACING.xs,
-    paddingHorizontal: SPACING.md,
-    backgroundColor: COLORS.accentMist,
-    borderRadius: RADII.sm,
-  } as ViewStyle,
-
   // Timeline
   timelineContent: {
     paddingBottom: 120,
@@ -417,7 +384,7 @@ const styles = StyleSheet.create({
     gap: 2,
   } as ViewStyle,
 
-  // NotConnectedState
+  // NotConnectedState / EmptyDayState
   notConnected: {
     flex: 1,
     justifyContent: 'center',

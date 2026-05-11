@@ -1,5 +1,6 @@
 // ---------------------------------------------------------------------------
 // Dashboard — Aujourd'hui (index.tsx)
+// Real data from useTasks + useAgenda, no hardcoded fallbacks shown as real
 // ---------------------------------------------------------------------------
 
 import React from 'react';
@@ -55,31 +56,37 @@ function formatTimeRange(start: string, end: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// NotConnectedState
+// EmptySection — shown when data is available but list is empty
 // ---------------------------------------------------------------------------
 
-function NotConnectedState({
-  message,
-  onPress,
-}: {
-  message: string;
-  onPress: () => void;
-}): React.ReactElement {
+function EmptySection({ message, cta, onPress }: { message: string; cta?: string; onPress?: () => void }): React.ReactElement {
   return (
-    <View style={styles.notConnected}>
-      <Icon name="Cloud" size={48} color={COLORS.textFaint} />
-      <FDText
-        variant="bodyMedium"
-        color={COLORS.textMuted}
-        align="center"
-        style={styles.notConnectedText}
-      >
+    <View style={styles.emptySection}>
+      <FDText variant="caption" color={COLORS.textFaint} align="center">
         {message}
       </FDText>
-      <Button variant="secondary" onPress={onPress}>
-        Configurer
-      </Button>
+      {cta !== undefined && onPress !== undefined && (
+        <Button variant="ghost" size="sm" onPress={onPress}>
+          {cta}
+        </Button>
+      )}
     </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SyncBanner — shown when Google Calendar is not connected
+// ---------------------------------------------------------------------------
+
+function SyncBanner({ onPress }: { onPress: () => void }): React.ReactElement {
+  return (
+    <Pressable onPress={onPress} style={styles.syncBanner}>
+      <Icon name="Cloud" size={14} color={COLORS.textFaint} />
+      <FDText variant="caption" color={COLORS.textFaint} style={{ flex: 1 }}>
+        Connectez Google Agenda pour voir vos événements en temps réel
+      </FDText>
+      <Icon name="ChevronRight" size={14} color={COLORS.textFaint} />
+    </Pressable>
   );
 }
 
@@ -107,9 +114,7 @@ function HeroEventCard({ event }: { event: CalendarEvent }): React.ReactElement 
           style={StyleSheet.absoluteFill}
           pointerEvents="none"
         />
-        {/* Inner border line */}
         <View style={[styles.heroAccentLine, { backgroundColor: calColor }]} />
-
         <View style={styles.heroContent}>
           <Badge kind="info">{calLabel}</Badge>
           <FDText variant="bodyMedium" size={20} style={styles.heroTitle}>
@@ -143,9 +148,7 @@ function AISuggestionBanner(): React.ReactElement {
   return (
     <View style={styles.aiBanner}>
       <View style={styles.aiBannerInner}>
-        {/* Left accent border */}
         <View style={styles.aiBannerLine} />
-
         <View style={styles.aiBannerContent}>
           <View style={styles.aiBannerHeader}>
             <Icon name="Sparkle" size={16} color={COLORS.accent} />
@@ -154,15 +157,15 @@ function AISuggestionBanner(): React.ReactElement {
             </FDText>
           </View>
           <FDText variant="body" style={styles.aiBannerMessage}>
-            Vous avez 2 heures libres cet après-midi pour préparer la présentation Q2
+            Demandez à l'assistant de résumer vos tâches du jour
           </FDText>
           <View style={styles.aiBannerActions}>
             <Button
               variant="ai"
               size="sm"
-              onPress={() => { router.push('/modals/add-event' as never); }}
+              onPress={() => { router.push('/(tabs)/assistant' as never); }}
             >
-              Planifier
+              Ouvrir l'assistant
             </Button>
             <Pressable onPress={() => setDismissed(true)} style={styles.aiBannerDismiss}>
               <FDText variant="caption" color={COLORS.textFaint}>
@@ -182,10 +185,17 @@ function AISuggestionBanner(): React.ReactElement {
 
 export default function DashboardScreen(): React.ReactElement {
   const router = useRouter();
-  const { tasks, fetchAll, update: updateTask, remove: removeTask } = useTasks();
-  const { events, fetchTodayEvents } = useAgenda();
+  const { tasks, fetchAll, update: updateTask, remove: removeTask, syncStatus: taskSyncStatus } = useTasks();
+  const { events, fetchTodayEvents, isNotConnected, syncStatus: agendaSyncStatus } = useAgenda();
 
   const [refreshing, setRefreshing] = React.useState(false);
+
+  // Fetch real data on mount
+  React.useEffect(() => {
+    void fetchAll();
+    void fetchTodayEvents();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const onRefresh = React.useCallback(async () => {
     setRefreshing(true);
@@ -195,8 +205,16 @@ export default function DashboardScreen(): React.ReactElement {
 
   const pendingTasks = tasks.filter((t) => t.status !== 'done');
   const urgentTasks = tasks.filter((t) => t.priority === 'urgent' && t.status !== 'done');
-  const currentEvent = events.find((e) => e.isCurrent === true) ?? null;
+
+  // Find current event (within time range right now)
+  const now = Date.now();
+  const currentEvent = events.find((e) =>
+    new Date(e.start).getTime() <= now && new Date(e.end).getTime() >= now
+  ) ?? (events.length > 0 ? events[0] : null);
+
   const todayTasks = pendingTasks.slice(0, 4);
+
+  const isLoading = taskSyncStatus === 'syncing';
 
   const toggleTask = (id: string): void => {
     const task = tasks.find((t) => t.id === id);
@@ -232,6 +250,13 @@ export default function DashboardScreen(): React.ReactElement {
             </View>
           </View>
 
+          {/* ── Bandeau connexion Google si absent ── */}
+          {isNotConnected && (
+            <View style={styles.bannerSection}>
+              <SyncBanner onPress={() => router.push('/(tabs)/profile' as never)} />
+            </View>
+          )}
+
           {/* ── Métriques ── */}
           <View style={styles.metricsSection}>
             <View style={styles.metricsRow}>
@@ -260,12 +285,16 @@ export default function DashboardScreen(): React.ReactElement {
           <View style={styles.section}>
             <FDText variant="label">MAINTENANT</FDText>
             <View style={styles.sectionContent}>
-              {currentEvent !== null ? (
+              {isNotConnected ? (
+                <EmptySection
+                  message="Connectez Google Agenda pour voir vos événements"
+                  cta="Configurer"
+                  onPress={() => router.push('/(tabs)/profile' as never)}
+                />
+              ) : currentEvent !== null ? (
                 <HeroEventCard event={currentEvent} />
               ) : (
-                <FDText variant="body" color={COLORS.textFaint}>
-                  Aucun événement en cours
-                </FDText>
+                <EmptySection message="Aucun événement en cours" />
               )}
             </View>
           </View>
@@ -273,8 +302,10 @@ export default function DashboardScreen(): React.ReactElement {
           {/* ── Tâches du jour ── */}
           <View style={styles.section}>
             <View style={styles.sectionTitleRow}>
-              <FDText variant="label">AUJOURD'HUI</FDText>
-              <Pressable onPress={() => {}}>
+              <FDText variant="label">
+                {isLoading ? 'CHARGEMENT…' : 'AUJOURD\'HUI'}
+              </FDText>
+              <Pressable onPress={() => router.push('/(tabs)/tasks' as never)}>
                 <FDText variant="caption" color={COLORS.accent}>
                   Tout voir
                 </FDText>
@@ -282,9 +313,8 @@ export default function DashboardScreen(): React.ReactElement {
             </View>
             <View style={styles.sectionContent}>
               {todayTasks.length === 0 ? (
-                <NotConnectedState
-                  message="Aucune tâche en cours. Connectez un service ou ajoutez une tâche."
-                  onPress={() => { router.push('/profile' as never); }}
+                <EmptySection
+                  message="Aucune tâche en attente 🎉"
                 />
               ) : (
                 todayTasks.map((task) => (
@@ -294,6 +324,10 @@ export default function DashboardScreen(): React.ReactElement {
                     compact
                     onCheck={() => toggleTask(task.id)}
                     onDelete={() => { void removeTask(task.id); }}
+                    onPress={() => router.push({
+                      pathname: '/modals/edit-task',
+                      params: { taskId: task.id },
+                    })}
                   />
                 ))
               )}
@@ -335,6 +369,23 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   } as ViewStyle,
 
+  // Sync banner
+  bannerSection: {
+    paddingHorizontal: SPACING.lg,
+    marginBottom: SPACING.md,
+  } as ViewStyle,
+  syncBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    backgroundColor: COLORS.bgSurface,
+    borderRadius: RADII.sm,
+    borderWidth: 1,
+    borderColor: COLORS.hairline,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+  } as ViewStyle,
+
   // Metrics
   metricsSection: {
     paddingHorizontal: SPACING.lg,
@@ -361,6 +412,17 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   sectionContent: {
     gap: SPACING.sm,
+  } as ViewStyle,
+
+  // EmptySection
+  emptySection: {
+    alignItems: 'center',
+    paddingVertical: SPACING.lg,
+    gap: SPACING.sm,
+    backgroundColor: COLORS.bgSurface,
+    borderRadius: RADII.md,
+    borderWidth: 1,
+    borderColor: COLORS.hairline,
   } as ViewStyle,
 
   // HeroEventCard
@@ -442,16 +504,4 @@ const styles = StyleSheet.create({
   aiBannerDismiss: {
     paddingVertical: 4,
   } as ViewStyle,
-
-  // NotConnectedState
-  notConnected: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: SPACING.xxl,
-  } as ViewStyle,
-  notConnectedText: {
-    marginTop: SPACING.lg,
-    marginBottom: SPACING.md,
-  },
 });
